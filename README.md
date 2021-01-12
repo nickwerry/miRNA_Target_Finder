@@ -2,10 +2,10 @@
 A tool to identify strongly supported miRNA targets using databases of validated or predicted interactions.
 
 ## To run:
-1 Open file in RStudio/
-2. Knit > Knit with Parameter/
-3. Input miRNA name (in hsa-miR-##-#p format)/
-4. Select options (see below)/
+1 Open file in RStudio\
+2. Knit > Knit with Parameter\
+3. Input miRNA name (in hsa-miR-##-#p format)\
+4. Select options (see below)\
 
 ### Validated Interactions:
 - Pulls from validated databases (mirecords, mirtarbase, tarbase)
