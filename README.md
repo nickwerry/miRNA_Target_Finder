@@ -2,17 +2,17 @@
 A tool to identify strongly supported miRNA targets using databases of validated or predicted interactions.
 
 ## To run:
-1 Open file in RStudio
-2. Knit > Knit with Parameter
-3. Input miRNA name (in hsa-miR-##-#p format)
-4. Select options (see below)
+1 Open file in RStudio/
+2. Knit > Knit with Parameter/
+3. Input miRNA name (in hsa-miR-##-#p format)/
+4. Select options (see below)/
 
-## Validated Interactions:
+### Validated Interactions:
 - Pulls from validated databases (mirecords, mirtarbase, tarbase)
 - Cleans data, removes duplicated target/pubmedID to avoid redundancy
 - Ranks results by number of supporting publications
 
-## Predicted Interactions:
+### Predicted Interactions:
 - Pulls from prediction databases (diana_microt, elmmo, microcosm, miranda, mirdb, pictar, pita, targetscan)
 - Cleans data, removes duplicated target/database to avoid redundancy
 - Ranks results by score in each database
