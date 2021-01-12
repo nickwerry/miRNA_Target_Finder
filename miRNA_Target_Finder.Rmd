@@ -22,7 +22,7 @@ params:
     label: "Save output file of all data?"
     value: TRUE
   numPredict:
-    label: "ADVANCED: How many databases must predict?"
+    label: "ADVANCED: Minimum number of predicting databases?"
     input: slider
     min: 1
     max: 8
