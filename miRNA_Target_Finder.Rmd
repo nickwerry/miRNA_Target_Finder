@@ -1,0 +1,167 @@
+---
+title: "miRNA_Target_Finder"
+author: "Nick Werry"
+date: "11/12/2020"
+output: html_document
+params:
+  miRNA:
+    label: "miRNA of interest (hsa-miR-##-#p)"
+    input: text
+    value: "hsa-miR-21-5p"
+  valResults: 
+    label: "Validated interactions"
+    value: TRUE
+  preResults:
+    label: "Predicted interactions" 
+    value: TRUE
+  numResults:
+    label: "How many targets to return?"
+    input: text
+    value: 5
+  saveFile:
+    label: "Save output file of all data?"
+    value: TRUE
+  numPredict:
+    label: "ADVANCED: How many databases must predict?"
+    input: slider
+    min: 1
+    max: 7
+    step: 1
+    value: 4
+
+---
+
+<!-- USE this line in the console to knit with custom parameters -->
+<!-- rmarkdown::render("Assignment 2_knit_w_params.Rmd", params = "ask") -->
+
+```{r Setup, echo = FALSE}
+library(knitr)
+
+#Tidy output
+opts_chunk$set(tidy = TRUE, cache=FALSE)
+
+#Limit decimals
+options(digits = 3) 
+```
+
+```{r Libraries, echo = FALSE, message = FALSE, warning = FALSE}
+if ("tidyverse" %in% rownames(installed.packages()) == FALSE) {install.packages("tidyverse")}
+library(tidyverse)
+if ("BiocManager" %in% rownames(installed.packages()) == FALSE) {install.packages("BiocManager")}
+library(BiocManager)
+if ("multiMiR" %in% rownames(installed.packages()) == FALSE) {BiocManager::install("multiMiR")}
+library(multiMiR)
+if ("ggplot2" %in% rownames(installed.packages()) == FALSE) {install.packages("ggplot2")}
+library(ggplot2)
+if ("writexl" %in% rownames(installed.packages()) == FALSE) {install.packages("writexl")}
+library(writexl)
+```
+
+```{r Parameters, echo = FALSE}
+#Add hsa to miRNA input without
+miRNA <- (ifelse(startsWith(params$miRNA, "hsa-"), params$miRNA, sprintf("hsa-%s", params$miRNA)))
+
+miRNA_short <-  str_extract(miRNA, "(miR\\-)\\w+")
+
+#Variables for filenames
+fileName <- sprintf("%s_Targets.xlsx", miRNA_short)
+```
+
+### miRNA Targets\
+#### `r if(params$valResult){sprintf("Top %s Validated Results", params$numResults)}`
+```{r Validated, echo = F, eval = params$valResults}
+#Get miRNA target data from validated databases
+valid_data <- multiMiR::get_multimir(org = "hsa", mirna = miRNA, table = "validated")
+
+#Filter to ensure validated results and named genes
+valid_df <- data.frame(valid_data@data[c(1,4,7,8,9,10)]) %>%
+  filter(!(target_symbol == "")) %>%
+  filter(type == "validated")
+
+#Create minimal dataframe, filter for unique values to avoid database redundancy
+valid_pubs <- mutate(valid_df[c(2,5)]) %>%
+  distinct()
+
+valid_pubs_table <- as.data.frame(table(valid_pubs$target_symbol)) %>%
+  arrange(desc(Freq)) %>%
+  rename("gene"="Var1","pubs"="Freq")
+
+head(valid_pubs_table, params$numResults)
+```
+#### `r if(params$preResult){sprintf("Top %s Predicted Results", params$numResults)}`
+```{r Predicted, echo = FALSE, eval = params$preResults}
+#Get miRNA target data from predicted databases
+predict_data <- multiMiR::get_multimir(org = "hsa", mirna = miRNA, table = "predicted")
+
+#Filter to ensure predicted results and named genes
+predict_df <- data.frame(predict_data@data[c(1,4,7,8)]) %>%
+  filter(!(target_symbol == "")) %>%
+  filter(type == "predicted")
+
+#Select for minimal dataframe, count number of databases identifying the target
+predict_bases <- mutate(predict_df[c(1:3)]) %>%
+  group_by(target_symbol) %>%
+  mutate(database_count = length(unique(database))) %>%
+  distinct()
+
+#Filter based on input number of databases, calculate mean rank across databases
+predict_rank <- predict_bases %>%
+  filter(database_count >= params$numPredict) %>%
+  group_by(database) %>%
+  mutate(rank = order(order(database))) %>% #Follow default score ranking
+  group_by(target_symbol) %>%
+  mutate(mean_rank = mean(rank)) %>%
+  arrange(mean_rank)
+
+#Clean results to show top interactions based on mean ranking
+predict_tops <- predict_rank %>%
+  dplyr::select(target_symbol, database_count, mean_rank) %>%
+  distinct()
+
+#Plot database restriction to see how many interactions are being ignored
+ggplot(predict_bases, mapping = aes(database_count)) +
+  geom_histogram(binwidth = 1) +
+  scale_x_continuous(breaks = (1:7)) +
+  geom_vline(xintercept = (params$numPredict - 0.5), colour = "red") +
+  ggtitle(sprintf("Predicted results filtered for presence in %s or more databases", params$numPredict))
+
+#Output result
+head(predict_tops, params$numResults)
+```
+
+```{r Save Results, echo = F, eval = params$saveFile}
+#Run analyses if not performed above
+if (params$preResults == FALSE){
+valid_data <- multiMiR::get_multimir(org = "hsa", mirna = miRNA, table = "validated")
+valid_df <- data.frame(valid_data@data[c(1,4,7,8,9,10)]) %>%
+  filter(!(target_symbol == "")) %>%
+  filter(type == "validated")
+valid_pubs <- mutate(valid_df[c(2,5)]) %>%
+  distinct()
+valid_pubs_table <- as.data.frame(table(valid_pubs$target_symbol)) %>%
+  arrange(desc(Freq)) %>%
+  rename("gene"="Var1","pubs"="Freq")
+}
+if (params$valResults == FALSE){
+predict_data <- multiMiR::get_multimir(org = "hsa", mirna = miRNA, table = "predicted")
+predict_df <- data.frame(predict_data@data[c(1,4,7,8)]) %>%
+  filter(!(target_symbol == "")) %>%
+  filter(type == "predicted")
+predict_bases <- mutate(predict_df[c(1:3)]) %>%
+  group_by(target_symbol) %>%
+  mutate(database_count = length(unique(database))) %>%
+  distinct()
+predict_rank <- predict_bases %>%
+  filter(database_count >= params$numPredict) %>%
+  group_by(database) %>%
+  mutate(rank = order(order(database))) %>% #Follow default score ranking
+  group_by(target_symbol) %>%
+  mutate(mean_rank = mean(rank)) %>%
+  arrange(mean_rank)
+predict_tops <- predict_rank %>%
+  dplyr::select(target_symbol, database_count, mean_rank) %>%
+  distinct()
+}
+
+writexl::write_xlsx(x = list(Predicted = predict_tops, Validated = valid_pubs_table), path = sprintf("%s Targets.xlsx", miRNA_short))
+```
