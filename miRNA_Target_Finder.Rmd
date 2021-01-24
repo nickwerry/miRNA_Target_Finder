@@ -30,12 +30,12 @@ params:
     label: "Save output file of all data?"
     value: TRUE
   numDatabases:
-    label: "ADVANCED: How many databases must predict?"
+    label: "ADVANCED: Minimum prediction databases per query"
     input: slider
     min: 1
     max: 8
     step: 1
-    value: 4
+    value: 1
   Beep:
     label: "Beep when finished"
     value: FALSE
@@ -44,11 +44,11 @@ params:
 <!-- USE this line in the console to knit with custom parameters -->
 <!-- rmarkdown::render("miRNA_Target_Finder", params = "ask") -->
 
-```{r Setup, echo = FALSE}
+```{r Setup,echo=FALSE}
 library(knitr)
 
 #Tidy output
-opts_chunk$set(tidy = TRUE, cache=FALSE)
+opts_chunk$set(tidy = TRUE, cache=FALSE, echo = FALSE, message=FALSE, warning=FALSE)
 
 #Limit decimals
 options(digits = 3)
@@ -57,7 +57,7 @@ options(digits = 3)
 options(knitr.table.format = 'markdown')
 ```
 
-```{r Libraries, echo = FALSE, message = FALSE, warning = FALSE}
+```{r Libraries}
 if ("tidyverse" %in% rownames(installed.packages()) == FALSE) {install.packages("tidyverse")}
 library(tidyverse)
 library(writexl)
@@ -72,7 +72,7 @@ library(beepr)
 ```
 
 
-```{r Functions, echo = FALSE}
+```{r Functions}
 #Return formatted list of Query or Confounding miRNAs from input file, removing NAs
 miRNA_find <- function(input_df, miRNA_set, row = 1) {
   #Select range of file depending on if miRNA is query or confounding (miRNA_set)
@@ -118,7 +118,7 @@ database_count <- function(target_df) {
   group_by(mature_mirna_id, target_symbol) %>%
   mutate(indv_database_count = length(unique(database))) %>%
   group_by(target_symbol) %>%
-  mutate(cotarget_database_count = length(unique(database))) %>%
+  mutate(database_count = length(unique(database))) %>%
   distinct() 
 }
 
@@ -147,14 +147,14 @@ cotarget_rank <- function(cotarget_df){
       group_by(target_symbol) %>%
       mutate(mean_rank = mean(rank)) %>%
       arrange(mean_rank) %>%
-      arrange(desc(cotarget_database_count)) %>%
-      dplyr::select(target_symbol, cotarget_database_count, mean_rank) %>%
+      arrange(desc(database_count)) %>%
+      dplyr::select(target_symbol, database_count, mean_rank) %>%
       distinct()
   }
 }
 ```
 
-```{r Parameters, echo = FALSE}
+```{r Parameters}
 #Load inputs from file or text input
   #Load from text
 if (params$input_file == "") {
@@ -211,27 +211,31 @@ confounding_validated <- target_find(miRNA_confounding, "validated") %>%
 `r sprintf("%s predicted and %s validated confounding interactions", length(confounding_predicted$target_symbol), length(confounding_validated$target_symbol))`
 
 #### `r if(params$valResult){sprintf("Top %s Validated Results", params$numResults)}`
-```{r Validated, echo = F, eval = params$valResults}
+```{r Validated Analysis, eval = params$valResults || params$saveFile || params$preResults}
 #Get validated results for query miRNAs
 query_validated <- target_find(miRNA_query, "validated")
 qv_cotarget <- cotarget_find(query_validated)
 qv_rank <- cotarget_rank(qv_cotarget)
+```
 
-#Filter validated results to remove targets shared by confounding miRNAs
+```{r Validated Filter, eval = params$valResults || params$saveFile}
+#Filter out validated results from confounding miRNA(s)
 qv_no_cv <- qv_rank %>%
   filter(!(target_symbol %in% confounding_validated$target_symbol))
 
-#Reference against predicted results
+#Filter out predicted results from confounding miRNA(s)
 qv_no_cp <- qv_rank %>%
   filter(!(target_symbol %in% confounding_predicted$target_symbol))
 
-#Reference against both predicted and validated results
+#Filter out both predicted and validated results from confounding miRNA(s)
 qv_no_cv_cp <- qv_no_cv %>%
-  filter((target_symbol %in% qv_no_cp$target_symbol))
+  filter(target_symbol %in% qv_no_cp$target_symbol)
+```
 
+```{r Validated Output, eval = params$valResults}
 #Output number of removed targets
 v_diff <- length(qv_rank$target_symbol) - length(qv_no_cv_cp$target_symbol)
-cat(sprintf("%s targets shared by confounding miRNAs removed. Top %s of %s shown.", v_diff, params$numResults, length(qv_no_cv_cp$target_symbol)))
+cat(sprintf("%s targets with validated or predicted interactions with confounding miRNAs removed. Top %s of remaining %s targets shown.", v_diff, params$numResults, length(qv_no_cv_cp$target_symbol)))
 
 #Output top filtered result
 qv_no_cv_cp %>%
@@ -240,26 +244,50 @@ qv_no_cv_cp %>%
 ```
 
 #### `r if(params$preResult){sprintf("Top %s Predicted Results", params$numResults)}`
-```{r Predicted, echo = F, eval = params$preResults}
+```{r Predicted Analysis, eval = params$preResults || params$saveFile}
 #Get predicted results for query miRNAs
 query_predicted <- target_find(miRNA_query, "predicted")
 qp_databases <- database_count(query_predicted)
-qp_databases_filt <-  qp_databases %>% filter(indv_database_count >= params$numDatabases) #Filter from input slider to avoid biasing
+
+#Filter from input slider to avoid biasing
+qp_databases_filt <-  qp_databases %>% filter(indv_database_count >= params$numDatabases) 
+
+#Filter for inputs targeted by all query miRNAs
 qp_cotarget <- cotarget_find(qp_databases_filt)
+
+#Make table with count per database
+database_table <- qp_databases_filt[c(1,3)] %>%
+  distinct() %>%
+  table %>%
+  as.data.frame %>%
+  pivot_wider(id_cols = target_symbol, names_from = database, values_from = Freq)
+
+#Rank targets according to number of databases and mean rank across databases 
 qp_rank <- cotarget_rank(qp_cotarget)
 
-#Reference against predicted results
-qp_no_cp <- qp_rank %>%
+#Add per database info to ranked targets
+qp_rank_databases <- left_join(qp_rank, database_table, by = "target_symbol")
+```
+
+```{r Predicted Filter, eval = params$preResults || params$saveFile}
+#Filter out predicted results from confounding miRNA(s)
+qp_no_cp <- qp_rank_databases %>%
   filter(!(target_symbol %in% confounding_predicted$target_symbol))
 
-#Reference against previous vector of validated results
-qp_no_cv <- qp_rank %>%
+#Filter out previous vector of validated results from confounding miRNA(s)
+qp_no_cv <- qp_rank_databases %>%
   filter(!(target_symbol %in% confounding_validated$target_symbol))
 
-#Reference against both predicted and validated results
+#Filter out both predicted and validated results from confounding miRNA(s)
 qp_no_cv_cp <- qp_no_cp %>%
-  filter((target_symbol %in% qp_no_cv$target_symbol))
+  filter(target_symbol %in% qp_no_cv$target_symbol)
 
+#Filter out results from validated interactions of query miRNA(s)
+qp_no_cv_cp_qv <- qp_no_cv_cp %>%
+  filter(!(target_symbol %in% qv_rank$target_symbol))
+```
+
+```{r Predicted Output, eval = params$preResults}
 #Plot database restriction to see how many interactions are being ignored
 ggplot(qp_databases, mapping = aes(indv_database_count)) +
   geom_histogram(binwidth = 1) +
@@ -268,50 +296,64 @@ ggplot(qp_databases, mapping = aes(indv_database_count)) +
   ggtitle(sprintf("Predicted results filtered for presence in %s or more databases", params$numDatabases))
 
 #Output number of removed targets
-p_diff <- length(qp_rank$target_symbol) - length(qp_no_cv_cp$target_symbol)
-cat(sprintf("%s targets shared by confounding miRNAs removed. Top %s of %s shown.", p_diff, params$numResults, length(qp_no_cv_cp$target_symbol)))
+p_diff <- length(qp_rank_databases$target_symbol) - length(qp_no_cv_cp$target_symbol)
+p_diff_v <- length(qp_no_cv_cp$target_symbol) - length(qp_no_cv_cp_qv$target_symbol)
+
+cat(sprintf("%s targets with validated or predicted interactions with confounding miRNAs, and %s previously validated interactions with query miRNA(s) removed. Top %s of remaining %s targets shown.", p_diff, p_diff_v, params$numResults, length(qp_no_cv_cp_qv$target_symbol)))
 
 #Output top result
-qp_no_cv_cp %>%
+qp_no_cv_cp_qv %>%
   head(n = params$numResults) %>%
   kable(format = "simple")
 ```
 
-
 ```{r Save Results, echo = F, eval = params$saveFile}
-#Run analyses if not performed above
-if (params$valResults == FALSE){
-query_validated <- target_find(miRNA_query, "validated")
-qv_cotarget <- cotarget_find(query_validated)
-qv_rank <- cotarget_rank(qv_cotarget)
-confounding_validated <- target_find(miRNA_confounding, "validated") %>%
-  dplyr::select(target_symbol) %>%
-  distinct()
-qv_no_cv <- qv_rank %>%
-  filter(!(target_symbol %in% confounding_validated$target_symbol))
-}
-if (params$preResults == FALSE){
-#Get predicted results for query miRNAs
-query_predicted <- target_find(miRNA_query, "predicted")
-qp_databases <- database_count(query_predicted) %>%
-  filter(indv_database_count >= params$numDatabases)
-qp_cotarget <- cotarget_find(qp_databases)
-qp_rank <- cotarget_rank(qp_cotarget)
-qp_no_cv <- qp_rank %>%
-  filter(!(target_symbol %in% confounding_validated$target_symbol))
-}
+#Make dataframes of all extra data for validated and predicted results with input confounding miRNAs
+v_others_df <- left_join(qv_rank, qv_no_cp, by = "target_symbol") %>%
+  left_join(qv_no_cv, by = "target_symbol")
 
-#List of data for excel
+p_outputs_df <- left_join(qp_rank_databases, qp_no_cv_cp[1:3], by = "target_symbol") %>%
+  left_join(qp_no_cp[1:3], by = "target_symbol") %>%
+  left_join(qp_no_cv[1:3], by = "target_symbol")
+
+#Rename columns, reorder and sort by most filtered targets
+v_others_clean_df <- v_others_df %>%
+  relocate(Gene = target_symbol, 
+         Unfiltered = reports.x, 
+         No_Conf_P = reports.y, 
+         No_Conf_V = reports) %>%
+  arrange(desc(Unfiltered))
+
+p_others_clean_df <- p_outputs_df %>%
+  relocate(Gene = target_symbol, 
+         Unfiltered_Database_Count = database_count.x, 
+         Unfiltered_Mean_Rank = mean_rank.x, 
+         No_Conf_VP_Database_Count = database_count.y, 
+         No_Conf_VP_Mean_Rank = mean_rank.y, 
+         No_Conf_P_Database_Count = database_count.x.x, 
+         No_Conf_P_Mean_Rank = mean_rank.x.x, 
+         No_Conf_V_Database_Count = database_count.y.y, 
+         No_Conf_V_Mean_Rank = mean_rank.y.y) %>%
+  arrange(desc(Unfiltered_Database_Count), Unfiltered_Mean_Rank)
+
+#Format output
 data_output <- if (length(miRNA_confounding) == 0) {
-    list(Pred. = qp_rank, Val. = qv_rank)
+    list(Predicted_Result = qp_rank_databases, 
+         Validated_Result = qv_rank)
 } else {
-    list(Pred. = qp_rank, Val. = qv_rank, Pred_no_CV = qp_no_cv, Val_no_CV = qv_no_cv, Pre_no_CP = qp_no_cp, Pre_no_CP_CV = qp_no_cv_cp, CV = confounding_validated, CP = confounding_predicted)
+    list(Val_Filtered_Targs = qv_no_cv_cp, 
+         Pred_Filtered_Targs = qp_no_cv_cp_qv, 
+         Val_All_Targs = v_others_clean_df, 
+         Pred_All_Targs = p_others_clean_df,
+         Val_Confounding_Targs = confounding_validated, 
+         Pred_Confounding_Targs = confounding_predicted)
 }
 
+#Export to excel file with miRNA query name(s)
 writexl::write_xlsx(x = data_output, path = fileName)
 ```
 
-```{r Beep, echo = FALSE, eval = params$Beep}
+```{r Beep, eval = params$Beep}
 beepr::beep(1)
 Sys.sleep(.5)
 beepr::beep(1)
