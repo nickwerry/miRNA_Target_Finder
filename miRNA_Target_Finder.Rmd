@@ -101,6 +101,7 @@ target_find <- function(mirna_list, database_type) {
   #Process data if searching validated databases
   if (database_type == "validated") {
     target_df <- data.frame(all_data@data) %>%
+    filter(support_type != "negative") %>%
     dplyr::select(3,4,9,10) 
   #Process data if searching predicted databases
   } else if (database_type == "predicted"){
