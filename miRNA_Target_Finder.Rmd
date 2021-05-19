@@ -7,7 +7,11 @@ params:
   input_file:
     label: "load input file OR enter sequences below"
     input: file
-    value: "Demo_file.xlsx"
+    value: ""
+  subject_genes:
+    label: "load file of target genes of interest (TGOIs)"
+    input: file
+    value: ""
   miRNA_A:
     label: "first miRNA of interest (hsa-miR-##-#p)"
     input: text
@@ -38,7 +42,7 @@ params:
     value: 1
   Beep:
     label: "Beep when finished"
-    value: FALSE
+    value: TRUE
 ---
 
 <!-- USE this line in the console to knit with custom parameters -->
@@ -175,6 +179,13 @@ if (params$input_file == "") {
   miRNA_confounding <- miRNA_find(input_df, "confounding")
 }
 
+#Load set of target genes of interest to filter for later
+if (nchar(params$subject_genes[1]) != 0){
+  subject_genes <- read_xlsx(params$subject_genes)
+} else {
+  subject_genes <- NULL
+}
+
 #Create string of abbreviated miRNA inputs
 query_short <- vector(mode = "character")
 for (miR in miRNA_query){
@@ -194,7 +205,7 @@ fileName <- sprintf("Output %s.xlsx", q_amp)
 
 #Set blank dfs to allow for no confounding
 confounding_predicted <- data.frame(target_symbol = NULL) 
-confounding_validated <- data.frame(target_symbol = NULL) 
+confounding_validated <- data.frame(target_symbol = NULL)
 ```
 ### `r q_amp` targets `r if (length(miRNA_confounding) != 0){sprintf("without overlap from %s", c_amp)}`\
 
@@ -306,6 +317,7 @@ qp_no_cv_cp %>%
   kable(format = "simple")
 ```
 
+
 ```{r Save Results, echo = F, eval = params$saveFile}
 #Make dataframes of all extra data for validated and predicted results with input confounding miRNAs
 v_others_df <- left_join(qv_rank, qv_no_cp, by = "target_symbol") %>%
@@ -333,10 +345,13 @@ p_others_clean_df <- p_outputs_df %>%
   arrange(desc(Unfiltered_Database_Count), Unfiltered_Mean_Rank)
 
 #Format output
-data_output <- if (length(miRNA_confounding) == 0) {
+data_output <- if (length(subject_genes) != 0) {
+    list(TGOI_Predicted_Result = semi_join(qp_rank_databases, subject_genes, by = "target_symbol"), 
+          TGOI_Validated_Result = semi_join(qv_rank, subject_genes, by = "target_symbol"))
+  } else if (length(miRNA_confounding) == 0) {
     list(Predicted_Result = qp_rank_databases, 
-         Validated_Result = qv_rank)
-} else {
+          Validated_Result = qv_rank)
+  } else {
     list(Val_Filtered_Targs = qv_no_cv_cp, 
          Pred_Filtered_Targs = qp_no_cv_cp, 
          Val_All_Targs = v_others_clean_df, 
